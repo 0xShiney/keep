@@ -1,0 +1,26 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# next
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+
+# env / secrets — never commit
+.env
+.env.local
+.env.*.local
+deploy/.env
+deploy/secrets/
+
+# tests / tooling
+coverage/
+playwright-report/
+test-results/
+.turbo/
+*.log
+
+# os
+.DS_Store
