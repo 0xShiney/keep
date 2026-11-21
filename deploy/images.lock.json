@@ -1,0 +1,25 @@
+{
+  "$comment": "Resolved 2026-11-21 from the registries' distribution APIs. Re-run scripts/pin-images.mjs after a deliberate upgrade.",
+  "images": {
+    "forgejo": {
+      "ref": "code.forgejo.org/forgejo/forgejo:15.0.12",
+      "digest": "sha256:9a95f97ccfdf374472c96d958f6e3788d54076e0349fdce7af56ba8541d066b2",
+      "source": "https://code.forgejo.org/v2/forgejo/forgejo/manifests/15.0.12"
+    },
+    "postgres": {
+      "ref": "postgres:16.10-alpine",
+      "digest": "sha256:029660641a0cfc575b14f336ba448fb8a75fd595d42e1fa316b9fb4378742297",
+      "source": "https://registry-1.docker.io/v2/library/postgres/manifests/16.10-alpine"
+    },
+    "caddy": {
+      "ref": "caddy:2.10.2-alpine",
+      "digest": "sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d",
+      "source": "https://registry-1.docker.io/v2/library/caddy/manifests/2.10.2-alpine"
+    },
+    "restic": {
+      "ref": "restic/restic:0.18.0",
+      "digest": "sha256:4cf4a61ef9786f4de53e9de8c8f5c040f33830eb0a10bf3d614410ee2fcb6120",
+      "source": "https://registry-1.docker.io/v2/restic/restic/manifests/0.18.0"
+    }
+  }
+}

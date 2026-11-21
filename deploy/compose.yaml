@@ -1,0 +1,196 @@
+# Keep — single-host production stack.
+#
+# Images are pinned by digest (see deploy/images.lock.json). `docker compose config`
+# resolves ${VARS} from ../.env; copy .env.example to .env first (chmod 600).
+#
+# Ports: 80/443 (Caddy), 2222 (Forgejo SSH). Forgejo's web UI is never published;
+# reach it only through the private network or an SSH tunnel.
+
+name: keep
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+x-restart: &restart
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:16.10-alpine@sha256:029660641a0cfc575b14f336ba448fb8a75fd595d42e1fa316b9fb4378742297
+    <<: *restart
+    logging: *logging
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: forgejo
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/init-keep-db.sql:/docker-entrypoint-initdb.d/10-keep-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks: [internal]
+    shm_size: 256mb
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 1g }
+
+  forgejo:
+    image: code.forgejo.org/forgejo/forgejo:15.0.12@sha256:9a95f97ccfdf374472c96d958f6e3788d54076e0349fdce7af56ba8541d066b2
+    <<: *restart
+    logging: *logging
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      USER_UID: "1000"
+      USER_GID: "1000"
+      FORGEJO__database__DB_TYPE: postgres
+      FORGEJO__database__HOST: postgres:5432
+      FORGEJO__database__NAME: forgejo
+      FORGEJO__database__USER: ${POSTGRES_USER:?}
+      FORGEJO__database__PASSWD: ${POSTGRES_PASSWORD:?}
+      FORGEJO__database__SSL_MODE: disable
+      FORGEJO__server__DOMAIN: ${GIT_HOST:?set GIT_HOST}
+      FORGEJO__server__ROOT_URL: https://${GIT_HOST}/
+      FORGEJO__server__HTTP_PORT: "3000"
+      FORGEJO__server__START_SSH_SERVER: "true"
+      FORGEJO__server__SSH_DOMAIN: ${GIT_HOST}
+      FORGEJO__server__SSH_PORT: ${SSH_PORT:-2222}
+      FORGEJO__server__SSH_LISTEN_PORT: "22"
+      FORGEJO__server__DISABLE_SSH: "false"
+      # Hardening: no open registration, no install wizard, private-by-default.
+      FORGEJO__security__INSTALL_LOCK: "true"
+      FORGEJO__security__PASSWORD_HASH_ALGO: argon2
+      FORGEJO__service__DISABLE_REGISTRATION: "true"
+      FORGEJO__service__REQUIRE_SIGNIN_VIEW: "true"
+      FORGEJO__service__ENABLE_NOTIFY_MAIL: "false"
+      FORGEJO__repository__DEFAULT_PRIVATE: private
+      FORGEJO__repository__DEFAULT_PUSH_CREATE_PRIVATE: "true"
+      FORGEJO__actions__ENABLED: "false"
+      FORGEJO__packages__ENABLED: "false"
+      FORGEJO__federation__ENABLED: "false"
+      FORGEJO__oauth2__ENABLED: "true"
+      FORGEJO__oauth2__ENABLE_AUTO_REGISTRATION: "false"
+      FORGEJO__mailer__ENABLED: "false"
+      FORGEJO__log__LEVEL: Info
+      FORGEJO__session__PROVIDER: db
+      FORGEJO__cron__ENABLED: "true"
+    volumes:
+      - forgejo-data:/data
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    ports:
+      - "${SSH_PORT:-2222}:22"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/api/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    networks: [internal]
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 1g }
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/web/Dockerfile
+    image: keep-web:local
+    <<: *restart
+    logging: *logging
+    depends_on:
+      postgres:
+        condition: service_healthy
+      forgejo:
+        condition: service_healthy
+    env_file:
+      - ../.env
+    environment:
+      NODE_ENV: production
+      FORGEJO_INTERNAL_URL: http://forgejo:3000
+      FORGEJO_PUBLIC_URL: https://${GIT_HOST:?}
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks: [internal]
+    deploy:
+      resources:
+        limits: { cpus: "2.0", memory: 1g }
+
+  caddy:
+    build:
+      context: ./caddy
+      dockerfile: Dockerfile
+    image: keep-caddy:local
+    <<: *restart
+    logging: *logging
+    depends_on:
+      web:
+        condition: service_healthy
+    environment:
+      APP_DOMAIN: ${APP_HOST:?set APP_HOST}
+      GIT_DOMAIN: ${GIT_HOST:?set GIT_HOST}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    networks: [internal]
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 256m }
+
+  # One-shot: `docker compose --profile backup run --rm backup`
+  backup:
+    image: restic/restic:0.18.0@sha256:4cf4a61ef9786f4de53e9de8c8f5c040f33830eb0a10bf3d614410ee2fcb6120
+    profiles: [backup]
+    logging: *logging
+    environment:
+      RESTIC_REPOSITORY: ${RESTIC_REPOSITORY:-}
+      RESTIC_PASSWORD: ${RESTIC_PASSWORD:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      POSTGRES_USER: ${POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      KEEP_DB_NAME: ${KEEP_DB_NAME:-keep}
+    entrypoint: ["/bin/sh", "/scripts/backup.sh"]
+    volumes:
+      - ./backup:/scripts:ro
+      - forgejo-data:/forgejo-data:ro
+      - ./backup/work:/work
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [internal]
+
+volumes:
+  postgres-data:
+  forgejo-data:
+  caddy-data:
+  caddy-config:
+
+networks:
+  internal:
+    driver: bridge
