@@ -168,7 +168,7 @@ export function CreateTokenForm() {
                       : current.filter((value) => value !== scope.value),
                   )
                 }
-                className="accent-[var(--accent)]"
+                className="accent-[var(--accent)] size-6 shrink-0"
               />
               {scope.label}
             </label>

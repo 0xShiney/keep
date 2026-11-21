@@ -6,6 +6,7 @@ import {
   isSafePreviewImage,
   normalizeRepoPath,
   parentPath,
+  splitRefPath,
 } from "@/lib/git/path";
 
 describe("normalizeRepoPath", () => {
@@ -71,5 +72,38 @@ describe("path helpers", () => {
     expect(isMarkdownPath("notes.txt")).toBe(false);
     expect(isSafePreviewImage("logo.png")).toBe(true);
     expect(isSafePreviewImage("logo.svg")).toBe(false);
+  });
+});
+
+describe("splitRefPath", () => {
+  it("takes the revision from the first segment", () => {
+    expect(splitRefPath(["main", "docs", "DESIGN.md"], { defaultBranch: "main" })).toEqual({
+      ref: "main",
+      path: "docs/DESIGN.md",
+    });
+  });
+
+  it("returns the default branch for a bare repository root", () => {
+    expect(splitRefPath(undefined, { defaultBranch: "trunk" })).toEqual({
+      ref: "trunk",
+      path: "",
+    });
+  });
+
+  it("keeps a slash inside an encoded branch name", () => {
+    expect(splitRefPath(["feature%2Fx", "README.md"], { defaultBranch: "main" })).toEqual({
+      ref: "feature/x",
+      path: "README.md",
+    });
+  });
+
+  it("lets an explicit ?ref override the segment", () => {
+    expect(
+      splitRefPath(["docs", "DESIGN.md"], { ref: "v1.0.0", defaultBranch: "main" }),
+    ).toEqual({ ref: "v1.0.0", path: "docs/DESIGN.md" });
+  });
+
+  it("still rejects traversal in the path part", () => {
+    expect(() => splitRefPath(["main", "..", "etc"], { defaultBranch: "main" })).toThrow();
   });
 });

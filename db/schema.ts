@@ -79,6 +79,27 @@ export const auditLog = pgTable(
   (table) => [index("audit_log_created_idx").on(table.createdAt)],
 );
 
+export const idempotencyRecord = pgTable(
+  "idempotency_record",
+  {
+    /** sha256(user + method + path + Idempotency-Key) */
+    id: text("id").primaryKey(),
+    userId: integer("user_id").notNull(),
+    method: text("method").notNull(),
+    path: text("path").notNull(),
+    key: text("key").notNull(),
+    /** sha256 of the method, path and raw request body. */
+    fingerprint: text("fingerprint").notNull(),
+    state: text("state").notNull(),
+    status: integer("status"),
+    response: text("response"),
+    contentType: text("content_type"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [index("idempotency_record_expires_idx").on(table.expiresAt)],
+);
+
 export const renderCache = pgTable("render_cache", {
   key: text("key").primaryKey(),
   html: text("html").notNull(),

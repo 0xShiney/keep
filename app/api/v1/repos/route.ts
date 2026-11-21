@@ -9,6 +9,7 @@ import { forbidden } from "@/lib/errors";
 import { listRepos } from "@/server/repos";
 import { audit } from "@/server/audit";
 import { idempotencyKey } from "@/lib/http/request";
+import { idempotent } from "@/lib/http/idempotency";
 
 export const GET = withApi(async (request, { requestId }) => {
   const { viewer, gateway } = await apiContext();
@@ -47,30 +48,32 @@ export const POST = withApi(
     const decision = authorize(viewer, "repo:write", { kind: "system" });
     if (!decision.allowed) throw forbidden("Only the owner can create repositories");
 
-    const input = await parseJson(request, createRepoSchema);
-    const repo = await gateway.createRepo({
-      name: input.name,
-      description: input.description,
-      private: input.private,
-      autoInit: input.autoInit,
-      gitignores: input.gitignore || undefined,
-      license: input.license || undefined,
-      readme: input.readme ? "Default" : undefined,
-    });
-
-    await audit({
-      userId: identity.userId,
-      action: "repo.create",
-      resource: repo.fullName,
-      requestId,
-      metadata: {
-        private: repo.private,
+    return idempotent(request, { userId: identity.userId, requestId }, async () => {
+      const input = await parseJson(request, createRepoSchema);
+      const repo = await gateway.createRepo({
+        name: input.name,
+        description: input.description,
+        private: input.private,
         autoInit: input.autoInit,
-        idempotencyKey: idempotencyKey(request),
-      },
-    });
+        gitignores: input.gitignore || undefined,
+        license: input.license || undefined,
+        readme: input.readme ? "Default" : undefined,
+      });
 
-    return jsonResponse(repo, { status: 201, requestId });
+      await audit({
+        userId: identity.userId,
+        action: "repo.create",
+        resource: repo.fullName,
+        requestId,
+        metadata: {
+          private: repo.private,
+          autoInit: input.autoInit,
+          idempotencyKey: idempotencyKey(request),
+        },
+      });
+
+      return jsonResponse(repo, { status: 201, requestId });
+    });
   },
   { mutation: true },
 );

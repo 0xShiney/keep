@@ -7,9 +7,8 @@
  * A session cookie is required because every route is authenticated; obtain one
  * by logging in through the browser and copying the cookie value.
  *
- * Thresholds encode the blueprint's numbers. They have NOT been measured in the
- * delivery workspace (no Docker / no load generator), so treat these as gates,
- * not as evidence.
+ * Thresholds encode the blueprint's numbers; docs/PHASES.md records the measured
+ * p95 values from the Phase 5 run (native stack, 10k-file / 5k-commit fixture).
  */
 import http from "k6/http";
 import { check, sleep } from "k6";
@@ -40,6 +39,13 @@ export const options = {
       duration: "60s",
       startTime: "130s",
     },
+    blob: {
+      executor: "constant-vus",
+      exec: "blob",
+      vus: 5,
+      duration: "60s",
+      startTime: "195s",
+    },
   },
   thresholds: {
     "http_req_duration{page:dashboard}": ["p(95)<300"],
@@ -67,5 +73,12 @@ export function tree() {
 export function commits() {
   const res = http.get(`${BASE}/${REPO}/commits`, { headers, tags: { page: "commits" } });
   check(res, { "commits 200": (r) => r.status === 200 });
+  sleep(1);
+}
+
+export function blob() {
+  const path = __ENV.BLOB_PATH ?? "counter.txt";
+  const res = http.get(`${BASE}/${REPO}/blob/main/${path}`, { headers, tags: { page: "blob" } });
+  check(res, { "blob 200": (r) => r.status === 200 });
   sleep(1);
 }

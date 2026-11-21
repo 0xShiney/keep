@@ -12,7 +12,7 @@ import { ButtonLink } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { InlineNotice } from "@/components/ui/feedback";
 import { assertValidRevision, InvalidRefError } from "@/lib/git/refs";
-import { decodePathSegments, InvalidPathError } from "@/lib/git/path";
+import { InvalidPathError, splitRefPath } from "@/lib/git/path";
 import { getThemePref } from "@/lib/theme";
 import { formatBytes } from "@/lib/utils";
 import { loadRepoForPage, pageContext } from "@/server/context";
@@ -40,16 +40,21 @@ export default async function BlobPage({
 
   const repo = await loadRepoForPage(gateway, viewer, owner, repoName, "repo:read");
 
-  let path = "";
+  let ref: string;
+  let path: string;
   try {
-    path = decodePathSegments(rawPath);
+    const split = splitRefPath(rawPath, {
+      ref: requestedRef,
+      defaultBranch: repo.defaultBranch,
+    });
+    ref = split.ref;
+    path = split.path;
   } catch (error) {
     if (error instanceof InvalidPathError) notFound();
     throw error;
   }
   if (!path) notFound();
 
-  const ref = requestedRef ?? repo.defaultBranch;
   try {
     assertValidRevision(ref);
   } catch (error) {

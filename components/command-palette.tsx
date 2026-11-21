@@ -166,7 +166,7 @@ export function CommandPalette({ repos }: { repos: PaletteRepo[] }) {
         type="button"
         onClick={() => setPaletteOpen(true)}
         className="border-border bg-surface-1 text-fg-subtle hover:border-border-strong hover:text-fg-muted hidden h-8 min-w-56 items-center gap-2 rounded-md border px-2.5 text-xs transition-colors sm:flex"
-        aria-label="Open command palette"
+        aria-label="Search or jump to… ⌘K"
       >
         <Search aria-hidden="true" className="size-3.5" />
         <span className="flex-1 text-left">Search or jump to…</span>

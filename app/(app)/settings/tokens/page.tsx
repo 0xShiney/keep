@@ -5,6 +5,7 @@ import { CreateTokenForm, RevokeTokenButton } from "@/components/forms/account-f
 import { InlineNotice, PageHeader } from "@/components/ui/feedback";
 import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel";
 import { getEnv } from "@/lib/env";
+import { brokerStatus } from "@/lib/forgejo/token-broker";
 import { formatDate } from "@/lib/utils";
 import { pageContext } from "@/server/context";
 import { listTokens } from "@/server/account";
@@ -15,6 +16,7 @@ export default async function TokensPage() {
   const { gateway } = await pageContext("/settings/tokens");
   const tokens = await listTokens(gateway);
   const env = getEnv();
+  const broker = brokerStatus();
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4">
@@ -23,11 +25,11 @@ export default async function TokensPage() {
         description={`Use a token as the password when cloning over ${env.GIT_PUBLIC_URL}.`}
       />
 
-      {!env.FORGEJO_ADMIN_TOKEN ? (
+      {!broker.configured ? (
         <InlineNotice tone="warning">
-          Token management needs <code className="font-mono">FORGEJO_ADMIN_TOKEN</code> because
-          Forgejo only issues personal access tokens to basic-authenticated users. Until it is
-          configured, create tokens in Forgejo&apos;s admin UI or set the variable and redeploy.
+          {broker.reason} Forgejo requires HTTP Basic auth as an admin service account to issue
+          personal access tokens, so Keep uses a dedicated broker account rather than an admin
+          token. Create one with <code className="font-mono">./deploy/forgejo/bootstrap.sh</code>.
         </InlineNotice>
       ) : null}
 

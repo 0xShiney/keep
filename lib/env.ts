@@ -20,15 +20,20 @@ const envSchema = z.object({
 
   FORGEJO_CLIENT_ID: z.string().default(""),
   FORGEJO_CLIENT_SECRET: z.string().default(""),
-  /** Server-held admin token used only for PAT issuance via the Sudo header. */
-  FORGEJO_ADMIN_TOKEN: z.string().default(""),
+  /**
+   * Dedicated admin service account used ONLY to mint/list/revoke personal
+   * access tokens (Forgejo requires Basic auth for that endpoint). Must never be
+   * the owner's own login. See lib/forgejo/token-broker.ts.
+   */
+  FORGEJO_BROKER_USER: z.string().default(""),
+  FORGEJO_BROKER_PASSWORD: z.string().default(""),
 
   SESSION_SECRET: z.string().min(32).default(DEV_SESSION_SECRET),
   DATABASE_URL: z.string().default(""),
 
   /** `forgejo` talks to the real engine; `fixture` serves an in-memory demo. */
   KEEP_BACKEND: z.enum(["forgejo", "fixture"]).default("forgejo"),
-  /** Explicit acknowledgement required to run fixture mode outside tests. */
+  /** Explicit acknowledgement required to run fixture mode in development. */
   KEEP_FIXTURE_ACK: booleanish,
 
   KEEP_OWNER_LOGIN: z.string().default(""),
@@ -65,10 +70,20 @@ export function getEnv(): Env {
 
   const env = parsed.data;
 
-  if (env.KEEP_BACKEND === "fixture" && env.NODE_ENV === "production" && !env.KEEP_FIXTURE_ACK) {
+  // Fixture mode serves invented data. There is no acknowledgement that makes it
+  // safe in production: a production deployment must always talk to Forgejo.
+  if (env.KEEP_BACKEND === "fixture" && env.NODE_ENV === "production") {
     throw new Error(
-      "KEEP_BACKEND=fixture is refused in production unless KEEP_FIXTURE_ACK=1 is set. " +
-        "Fixture mode serves invented data and must never be mistaken for a real forge.",
+      "KEEP_BACKEND=fixture is not permitted when NODE_ENV=production. " +
+        "Fixture mode is a development-only demo; set KEEP_BACKEND=forgejo for any production build.",
+    );
+  }
+
+  // Outside tests, even development fixture mode needs an explicit acknowledgement
+  // so a forgotten .env cannot show invented repositories.
+  if (env.KEEP_BACKEND === "fixture" && env.NODE_ENV === "development" && !env.KEEP_FIXTURE_ACK) {
+    throw new Error(
+      "KEEP_BACKEND=fixture requires KEEP_FIXTURE_ACK=1 outside tests; it is never a silent fallback.",
     );
   }
 

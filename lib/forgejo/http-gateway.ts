@@ -1,6 +1,6 @@
-import { ForgejoClient } from "./client";
+import { ForgejoApiError, type ForgejoClient } from "./client";
+import { AppError } from "@/lib/errors";
 import {
-  mapAccessToken,
   mapActivity,
   mapBranch,
   mapChangedFile,
@@ -19,7 +19,6 @@ import {
   mapTimelineComment,
   mapTreeEntry,
   mapUser,
-  type ApiAccessToken,
   type ApiActivity,
   type ApiBranch,
   type ApiChangedFile,
@@ -61,8 +60,9 @@ import type {
   CommitSummary,
   CommitDetail,
 } from "./model";
-import { cloneUrls, getEnv } from "@/lib/env";
+import { cloneUrls } from "@/lib/env";
 import { childLogger } from "@/lib/logger";
+import { getTokenBroker } from "./token-broker";
 
 const log = childLogger({ module: "forgejo-gateway" });
 
@@ -353,7 +353,8 @@ export class HttpForgejoGateway implements ForgejoGateway {
         fullName: assignee.full_name ?? null,
         avatarUrl: assignee.avatar_url ?? null,
       })),
-      timeline: timeline.data.map(mapTimelineComment),
+      // Forgejo can return JSON null for an empty timeline; never assume an array.
+      timeline: (timeline.data ?? []).map(mapTimelineComment),
     };
   }
 
@@ -487,16 +488,34 @@ export class HttpForgejoGateway implements ForgejoGateway {
       comments?: { path: string; body: string; new_position?: number; old_position?: number }[];
     },
   ): Promise<void> {
-    await this.client.empty("POST", `/repos/${owner}/${name}/pulls/${index}/reviews`, {
-      event: input.event,
-      body: input.body,
-      comments: input.comments?.map((comment) => ({
-        path: comment.path,
-        body: comment.body,
-        new_position: comment.new_position,
-        old_position: comment.old_position,
-      })),
-    });
+    try {
+      await this.client.empty("POST", `/repos/${owner}/${name}/pulls/${index}/reviews`, {
+        event: input.event,
+        body: input.body,
+        comments: input.comments?.map((comment) => ({
+          path: comment.path,
+          body: comment.body,
+          new_position: comment.new_position,
+          old_position: comment.old_position,
+        })),
+      });
+    } catch (error) {
+      // Forgejo refuses approvals authored by the pull's own author. A single-owner
+      // forge therefore cannot self-approve; say so instead of "the engine rejected
+      // this change" so the UI is actionable.
+      if (
+        error instanceof ForgejoApiError &&
+        error.status === 422 &&
+        /approve your own pull/i.test(error.body)
+      ) {
+        throw new AppError(
+          409,
+          "Self-approval is not allowed",
+          "Forgejo does not allow approving your own pull request. Comment on the pull, or have another account approve it.",
+        );
+      }
+      throw error;
+    }
   }
 
   async listReleases(owner: string, name: string): Promise<ReleaseSummary[]> {
@@ -544,49 +563,15 @@ export class HttpForgejoGateway implements ForgejoGateway {
   }
 
   async listTokens(): Promise<AccessTokenInfo[]> {
-    const { data } = await this.client.json<ApiAccessToken[]>(
-      `/users/${encodeURIComponent(this.username)}/tokens`,
-      { sudo: this.login },
-    );
-    return data.map(mapAccessToken);
+    return getTokenBroker().list(this.username);
   }
 
   async createToken(name: string, scopes: string[]): Promise<CreatedAccessToken> {
-    const env = getEnv();
-    if (!env.FORGEJO_ADMIN_TOKEN) {
-      throw new Error(
-        "FORGEJO_ADMIN_TOKEN is not configured. Forgejo only issues personal access tokens to " +
-          "basic-authenticated users, so Keep needs an admin token to act on the owner's behalf.",
-      );
-    }
-    const admin = new ForgejoClient({
-      baseUrl: env.FORGEJO_INTERNAL_URL,
-      token: env.FORGEJO_ADMIN_TOKEN,
-    });
-    const { data } = await admin.send<ApiAccessToken>(
-      "POST",
-      `/users/${encodeURIComponent(this.username)}/tokens`,
-      { name, scopes },
-      { sudoHeader: this.login },
-    );
-    return { id: data.id ?? 0, name: data.name ?? name, token: data.sha1 ?? "", scopes };
+    return getTokenBroker().create(this.username, name, scopes);
   }
 
   async deleteToken(name: string): Promise<void> {
-    const env = getEnv();
-    if (!env.FORGEJO_ADMIN_TOKEN) {
-      throw new Error("FORGEJO_ADMIN_TOKEN is required to revoke personal access tokens");
-    }
-    const admin = new ForgejoClient({
-      baseUrl: env.FORGEJO_INTERNAL_URL,
-      token: env.FORGEJO_ADMIN_TOKEN,
-    });
-    await admin.empty(
-      "DELETE",
-      `/users/${encodeURIComponent(this.username)}/tokens/${encodeURIComponent(name)}`,
-      undefined,
-      { sudoHeader: this.login },
-    );
+    return getTokenBroker().revoke(this.username, name);
   }
 
   async listActivity(limit: number): Promise<ActivityEvent[]> {

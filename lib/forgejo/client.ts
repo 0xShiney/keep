@@ -18,6 +18,12 @@ export class ForgejoApiError extends Error {
 export interface ForgejoClientOptions {
   baseUrl: string;
   token: string;
+  /**
+   * HTTP Basic credentials for the isolated token broker only. Forgejo requires
+   * Basic auth (not a bearer token) to mint personal access tokens, and Sudo is
+   * honoured for admin accounts. Never construct this from the owner's login.
+   */
+  basicAuth?: { username: string; password: string };
   /** Sudo header lets the server act as a user for PAT issuance only. */
   sudo?: string;
   timeoutMs?: number;
@@ -52,13 +58,17 @@ export function buildQuery(query?: Record<string, QueryValue>): string {
  */
 export class ForgejoClient {
   private readonly baseUrl: string;
-  private readonly token: string;
+  private readonly authorization: string | null;
   private readonly sudo: string | undefined;
   private readonly timeoutMs: number;
 
   constructor(options: ForgejoClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, "");
-    this.token = options.token;
+    this.authorization = options.basicAuth
+      ? `Basic ${Buffer.from(`${options.basicAuth.username}:${options.basicAuth.password}`).toString("base64")}`
+      : options.token
+        ? `Bearer ${options.token}`
+        : null;
     this.sudo = options.sudo;
     this.timeoutMs = options.timeoutMs ?? 15_000;
   }
@@ -72,7 +82,7 @@ export class ForgejoClient {
     const headers = new Headers(extra);
     headers.set("accept", "application/json");
     headers.set("user-agent", "keep/0.1 (+self-hosted)");
-    if (this.token) headers.set("authorization", `Bearer ${this.token}`);
+    if (this.authorization) headers.set("authorization", this.authorization);
     if (this.sudo) headers.set("sudo", this.sudo);
     return headers;
   }
@@ -110,6 +120,9 @@ export class ForgejoClient {
   private async ensureOk(response: Response, path: string): Promise<void> {
     if (response.ok) return;
     const body = await response.text().catch(() => "");
+    // The body is Forgejo's validation message; useful when a write is rejected.
+    // Debug level only: it can echo client-supplied values.
+    log.debug({ path, status: response.status, body: body.slice(0, 500) }, "forgejo rejected request");
     throw new ForgejoApiError(response.status, body.slice(0, 2000), path);
   }
 
@@ -133,7 +146,11 @@ export class ForgejoClient {
     options: { query?: Record<string, QueryValue>; sudoHeader?: string } = {},
   ): Promise<{ data: T; headers: Headers }> {
     const init: RequestInit = { method, headers: {} };
-    if (body !== undefined) init.body = JSON.stringify(body);
+    if (body !== undefined) {
+      // Forgejo rejects JSON bodies without this header (422 Unsupported Content-Type).
+      init.headers = { "content-type": "application/json" };
+      init.body = JSON.stringify(body);
+    }
     const response = await this.rawRequest(path, {
       ...init,
       query: options.query,
@@ -164,8 +181,11 @@ export class ForgejoClient {
     options: { sudoHeader?: string } = {},
   ): Promise<void> {
     const init: RequestInit = { method, headers: {} };
-    if (body !== undefined) init.body = JSON.stringify(body);
-    if (options.sudoHeader) init.headers = { sudo: options.sudoHeader };
+    if (body !== undefined) {
+      init.headers = { "content-type": "application/json" };
+      init.body = JSON.stringify(body);
+    }
+    if (options.sudoHeader) init.headers = { ...init.headers, sudo: options.sudoHeader };
     const response = await this.rawRequest(path, init);
     await this.ensureOk(response, path);
   }

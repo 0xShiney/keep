@@ -15,7 +15,21 @@ export default defineConfig({
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },
-  projects: [{ name: "chromium-dark", use: { ...devices["Desktop Chrome"], colorScheme: "dark" } }],
+  projects: [
+    // Signs in once so the a11y suite does not trip the app's login rate limiter.
+    { name: "setup", testMatch: /auth\.setup\.ts/ },
+    {
+      name: "chromium-dark",
+      testIgnore: [/auth\.setup\.ts/, /a11y\.spec\.ts/],
+      use: { ...devices["Desktop Chrome"], colorScheme: "dark" },
+    },
+    {
+      name: "a11y",
+      testMatch: /a11y\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], colorScheme: "dark" },
+    },
+  ],
   webServer: process.env.E2E_BASE_URL
     ? undefined
     : {

@@ -62,6 +62,9 @@ services:
       FORGEJO__server__ROOT_URL: https://${GIT_HOST}/
       FORGEJO__server__HTTP_PORT: "3000"
       FORGEJO__server__START_SSH_SERVER: "true"
+      # Required for the built-in SSH server: with this unset, key auth is refused
+      # for every clone/push (verified against 15.0.12).
+      FORGEJO__server__BUILTIN_SSH_SERVER_USER: "git"
       FORGEJO__server__SSH_DOMAIN: ${GIT_HOST}
       FORGEJO__server__SSH_PORT: ${SSH_PORT:-2222}
       FORGEJO__server__SSH_LISTEN_PORT: "22"

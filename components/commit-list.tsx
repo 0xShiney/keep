@@ -44,8 +44,9 @@ export function CommitList({
                 <Link
                   href={`/${owner}/${repo}/commits/${commit.sha}`}
                   className="border-border bg-surface-2 text-fg-muted hover:text-fg rounded-sm border px-1.5 py-px font-mono"
-                  aria-label={`Commit ${commit.sha}`}
+                  title={commit.sha}
                 >
+                  <span className="sr-only">Commit </span>
                   {commit.shortSha}
                 </Link>
                 {showRepo ? null : null}

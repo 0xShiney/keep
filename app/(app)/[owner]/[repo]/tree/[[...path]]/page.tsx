@@ -11,8 +11,7 @@ import { ButtonLink } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/feedback";
 import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel";
 import { assertValidRevision, InvalidRefError } from "@/lib/git/refs";
-import { InvalidPathError } from "@/lib/git/path";
-import { decodePathSegments } from "@/lib/git/path";
+import { InvalidPathError, splitRefPath } from "@/lib/git/path";
 import { formatRelativeTime } from "@/lib/utils";
 import { loadRepoForPage, pageContext } from "@/server/context";
 import { loadTree } from "@/server/code";
@@ -40,15 +39,20 @@ export default async function TreePage({
 
   const repo = await loadRepoForPage(gateway, viewer, owner, repoName, "repo:read");
 
-  let path = "";
+  let ref: string;
+  let path: string;
   try {
-    path = decodePathSegments(rawPath);
+    const split = splitRefPath(rawPath, {
+      ref: requestedRef,
+      defaultBranch: repo.defaultBranch,
+    });
+    ref = split.ref;
+    path = split.path;
   } catch (error) {
     if (error instanceof InvalidPathError) notFound();
     throw error;
   }
 
-  const ref = requestedRef ?? repo.defaultBranch;
   try {
     assertValidRevision(ref);
   } catch (error) {

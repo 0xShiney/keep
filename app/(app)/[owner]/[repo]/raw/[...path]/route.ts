@@ -4,7 +4,7 @@ import { authorize } from "@/lib/auth/authorize";
 import { badRequest, notFound } from "@/lib/errors";
 import { problemFromError, requestIdFrom } from "@/lib/http/problem";
 import { assertSameOrigin } from "@/lib/http/request";
-import { decodePathSegments, InvalidPathError, fileName } from "@/lib/git/path";
+import { InvalidPathError, fileName, splitRefPath } from "@/lib/git/path";
 import { assertValidRevision, InvalidRefError } from "@/lib/git/refs";
 import { contentDisposition } from "@/server/code";
 
@@ -38,18 +38,22 @@ export async function GET(
     const { owner, repo: repoName, path: rawPath } = await segment.params;
     const { viewer, gateway } = await apiContext();
 
+    const url = new URL(request.url);
+    let ref: string;
     let path: string;
     try {
-      path = decodePathSegments(rawPath);
+      const split = splitRefPath(rawPath, {
+        ref: url.searchParams.get("ref") ?? undefined,
+        defaultBranch: (await gateway.getRepo(owner, repoName)).defaultBranch,
+      });
+      ref = split.ref;
+      path = split.path;
     } catch (error) {
       if (error instanceof InvalidPathError) throw badRequest(error.message);
       throw error;
     }
     if (!path) throw badRequest("A file path is required");
 
-    const url = new URL(request.url);
-    const ref =
-      url.searchParams.get("ref") ?? (await gateway.getRepo(owner, repoName)).defaultBranch;
     try {
       assertValidRevision(ref);
     } catch (error) {

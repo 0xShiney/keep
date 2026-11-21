@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { buildCsp } from "@/lib/security/csp";
 
 /**
  * Next.js 16 renamed middleware to `proxy.ts` and runs it on the Node.js runtime.
@@ -8,30 +9,7 @@ import { NextResponse, type NextRequest } from "next/server";
  */
 export function proxy(request: NextRequest) {
   const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
-  const isDev = process.env.NODE_ENV !== "production";
-
-  const directives = [
-    "default-src 'self'",
-    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${isDev ? " 'unsafe-eval'" : ""}`,
-    // Tailwind emits a stylesheet, but Radix and Next inject inline style
-    // attributes. style-src-attr cannot carry a nonce, so inline styles are
-    // allowed while scripts stay nonce-locked. See docs/DECISIONS.md D-011.
-    "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob:",
-    "font-src 'self' data:",
-    `connect-src 'self'${isDev ? " ws: wss:" : ""}`,
-    "object-src 'none'",
-    "base-uri 'none'",
-    "form-action 'self'",
-    "frame-ancestors 'none'",
-    "manifest-src 'self'",
-  ];
-
-  if (!isDev) {
-    directives.push("upgrade-insecure-requests");
-  }
-
-  const csp = directives.join("; ");
+  const csp = buildCsp(nonce, process.env.NODE_ENV !== "production");
 
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-nonce", nonce);

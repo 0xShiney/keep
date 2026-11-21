@@ -27,7 +27,7 @@ API contract for third parties. Every route requires a session cookie unless not
 | Method | Path                                             | Notes                                                                                                                         |
 | ------ | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
 | GET    | `/api/v1/repos`                                  | `q`, `limit`, `page`; visibility-filtered by Forgejo                                                                          |
-| POST   | `/api/v1/repos`                                  | `{name, description?, private?, autoInit?, gitignore?, license?}`; `Idempotency-Key` accepted and recorded in the audit entry |
+| POST   | `/api/v1/repos`                                  | `{name, description?, private?, autoInit?, gitignore?, license?}`; honours `Idempotency-Key` (see below)                      |
 | GET    | `/api/v1/repos/{owner}/{repo}`                   | 404 when not readable                                                                                                         |
 | PATCH  | `/api/v1/repos/{owner}/{repo}`                   | rename/description/visibility/archive; requires admin                                                                         |
 | DELETE | `/api/v1/repos/{owner}/{repo}`                   | requires admin + explicit confirmation field                                                                                  |
@@ -76,7 +76,7 @@ Asset upload is **Planned** (needs multipart handling and a size cap review).
 | -------- | ----------------------- | ----------------------------------------------------------------------------------------------- |
 | GET/POST | `/api/v1/keys`          | list / add SSH key `{title, key}` (validated as an OpenSSH public key)                          |
 | DELETE   | `/api/v1/keys/{id}`     |                                                                                                 |
-| GET/POST | `/api/v1/tokens`        | list / create `{name, scopes}`; requires `FORGEJO_ADMIN_TOKEN`, otherwise 503 with instructions |
+| GET/POST | `/api/v1/tokens`        | list / create `{name, scopes}`; requires the broker account (D-017), otherwise 503 with instructions |
 | DELETE   | `/api/v1/tokens/{name}` |                                                                                                 |
 | DELETE   | `/api/v1/sessions/{id}` | revoke another session of the same user                                                         |
 | GET/PUT  | `/api/v1/prefs`         | theme/density/diff mode, stored in `user_pref`                                                  |
@@ -99,11 +99,26 @@ Asset upload is **Planned** (needs multipart handling and a size cap review).
 }
 ```
 
+## Idempotency
+
+Every `POST` that creates a resource (repos, branches, tags, issues, comments,
+pulls, reviews, releases, SSH keys, tokens) honours an optional
+`Idempotency-Key` header (`[A-Za-z0-9._-]{8,128}`):
+
+| Situation                                        | Result                                                    |
+| ------------------------------------------------ | --------------------------------------------------------- |
+| First request with a key                         | processed normally; response stored for 24 h              |
+| Retry, same key and same body                    | stored response replayed with `Idempotent-Replayed: true` |
+| Same key, different body                         | `422` `Idempotency-Key reused`                            |
+| Retry while the first request is still executing | `409` `Request in progress` (retry after a moment)        |
+| Handler fails                                    | reservation released, so a retry can succeed              |
+| No header                                        | processed normally (no dedupe)                            |
+
+Keys are scoped per user, method and path, so the same key on two endpoints is
+independent. See [DECISIONS](DECISIONS.md) D-020.
+
 ## Not implemented
 
-- `Idempotency-Key` is **recorded, not enforced**: a retried create can still
-  create two repositories. Acceptable for a single operator acting through the UI;
-  must be fixed before any automated client uses this API.
 - No OpenAPI document is generated from the route schemas yet; this file is
   maintained by hand.
 - Asset upload, code search and webhooks are out of scope for v1.

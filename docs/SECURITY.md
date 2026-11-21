@@ -84,9 +84,21 @@ nofollow"`, relative links are resolved inside the repository or dropped.
 - All secrets live in `.env` (0600, gitignored) or Docker secrets; nothing is
   prefixed `NEXT_PUBLIC_`. `pnpm check:public-env` scans built client chunks for
   secret names and values and fails the build if anything leaks.
-- `FORGEJO_ADMIN_TOKEN` is optional and only used server-side to issue personal
-  access tokens via the Sudo header. Without it, the tokens panel explains how to
-  create tokens in Forgejo instead.
+- `FORGEJO_BROKER_USER` / `FORGEJO_BROKER_PASSWORD` belong to a dedicated admin
+  service account used only to list/create/revoke personal access tokens. The
+  owner's password is never stored. Only `lib/forgejo/token-broker.ts` reads these
+  values; it exposes three operations and refuses to run when the broker login is
+  the owner.
+- Residual risk (accepted, D-017): the broker must be a Forgejo admin, because
+  15.0.12 has no scoped admin credential for token issuance. Mitigations: separate
+  account with a random 32-character password rotated on every `bootstrap.sh` run,
+  server-only env, one code path, every operation logged, 10-scope allowlist on
+  issued tokens (default `read:repository`), and the account can be removed at any
+  time without affecting the owner. If the password leaks, an attacker could mint
+  tokens for any account; rotate with `./deploy/forgejo/bootstrap.sh` and revoke
+  tokens the next time you inspect the tokens page.
+- Fixture mode is refused when `NODE_ENV=production`; demo data cannot be exposed
+  by production accidentally (D-007).
 - Logs are structured JSON (pino) with request ids; tokens, cookies, authorization
   headers and file contents are never logged.
 

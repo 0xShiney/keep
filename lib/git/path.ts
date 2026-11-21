@@ -44,18 +44,43 @@ export function normalizeRepoPath(input: string | string[] | undefined | null): 
 /** Decodes each URL segment exactly once; malformed escapes are rejected. */
 export function decodePathSegments(segments: string[] | undefined): string {
   if (!segments) return "";
-  const decoded = segments.map((segment) => {
-    try {
-      return decodeURIComponent(segment);
-    } catch {
-      throw new InvalidPathError("Path contains malformed percent-encoding");
-    }
-  });
-  return normalizeRepoPath(decoded);
+  return normalizeRepoPath(segments.map(decodeSegment));
 }
 
 export function assertSafeRepoPath(path: string): string {
   return normalizeRepoPath(path);
+}
+
+function decodeSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    throw new InvalidPathError("Path contains malformed percent-encoding");
+  }
+}
+
+/**
+ * Splits a `/{kind}/{ref}/{path...}` URL into its revision and repository path.
+ *
+ * Tree, blob and raw links all put the revision (branch or tag) in the first
+ * segment. `encodeURIComponent` escapes `/` inside a branch name (`feature%2Fx`),
+ * so a ref containing slashes arrives as one segment and is not confused with
+ * the file path. An explicit `?ref=` overrides the segment, which keeps older
+ * links (`/blob/some/path?ref=main`) working.
+ */
+export function splitRefPath(
+  segments: string[] | undefined,
+  options: { ref?: string; defaultBranch: string },
+): { ref: string; path: string } {
+  if (options.ref) {
+    return { ref: options.ref, path: decodePathSegments(segments) };
+  }
+  if (!segments || segments.length === 0) {
+    return { ref: options.defaultBranch, path: "" };
+  }
+
+  const [first, ...rest] = segments.map(decodeSegment);
+  return { ref: first, path: normalizeRepoPath(rest) };
 }
 
 const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "avif", "ico", "bmp"]);

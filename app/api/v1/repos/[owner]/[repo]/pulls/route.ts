@@ -4,6 +4,7 @@ import { forbidden } from "@/lib/errors";
 import { withApi } from "@/lib/http/api-route";
 import { parseJson } from "@/lib/http/body";
 import { jsonResponse } from "@/lib/http/problem";
+import { idempotent } from "@/lib/http/idempotency";
 import { createPullSchema } from "@/lib/schemas";
 import { listPulls } from "@/server/pulls";
 
@@ -32,9 +33,11 @@ export const POST = withApi<{ owner: string; repo: string }>(
     const decision = authorize(viewer, "pull:write", toRepoResource(repo));
     if (!decision.allowed) throw forbidden();
 
-    const input = await parseJson(request, createPullSchema);
-    const pull = await gateway.createPull(params.owner, params.repo, input);
-    return jsonResponse(pull, { status: 201, requestId });
+    return idempotent(request, { userId: viewer.userId, requestId }, async () => {
+      const input = await parseJson(request, createPullSchema);
+      const pull = await gateway.createPull(params.owner, params.repo, input);
+      return jsonResponse(pull, { status: 201, requestId });
+    });
   },
   { mutation: true },
 );

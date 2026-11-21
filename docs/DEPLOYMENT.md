@@ -52,10 +52,20 @@ actions/packages/federation off, Argon2 password hashing.
 ./deploy/forgejo/bootstrap.sh
 ```
 
-Creates the owner (if absent), registers an OAuth application with the exact
-callback `https://$APP_HOST/api/auth/callback`, writes
-`deploy/secrets/oauth.env` (0600), and deletes its bootstrap token. Copy the two
-values into `.env` as `FORGEJO_CLIENT_ID` / `FORGEJO_CLIENT_SECRET`.
+Creates the owner (if absent), creates or rotates the **token broker** service
+account (`keep-token-broker`, admin, random password) that Keep uses for personal
+access tokens, registers an OAuth application with the exact callback
+`https://$APP_HOST/api/auth/callback`, writes `deploy/secrets/oauth.env` (0600),
+and deletes its bootstrap token. Append that file to `.env` — it contains
+`FORGEJO_CLIENT_ID`, `FORGEJO_CLIENT_SECRET`, `FORGEJO_BROKER_USER` and
+`FORGEJO_BROKER_PASSWORD`. Re-running the script rotates the broker password and
+the OAuth client secret; restart the app afterwards.
+
+Why a broker account instead of an admin token: Forgejo 15.0.12 only mints tokens
+for HTTP Basic-authenticated admins (`401 auth method not allowed` otherwise), so
+the previous admin-token + Sudo design could not work. The broker is separate
+from the owner so Keep never holds the owner's password; residual risk is
+recorded in [DECISIONS](DECISIONS.md) D-017 and [SECURITY](SECURITY.md).
 
 If your Forgejo version's admin CLI differs, do it by hand: create the user in
 Forgejo (via tunnel), then Settings → Applications → **OAuth2 Applications** → new

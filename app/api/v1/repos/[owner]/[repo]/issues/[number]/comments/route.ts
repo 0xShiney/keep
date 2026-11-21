@@ -4,6 +4,7 @@ import { badRequest, forbidden } from "@/lib/errors";
 import { withApi } from "@/lib/http/api-route";
 import { parseJson } from "@/lib/http/body";
 import { jsonResponse } from "@/lib/http/problem";
+import { idempotent } from "@/lib/http/idempotency";
 import { commentSchema } from "@/lib/schemas";
 
 export const POST = withApi<{ owner: string; repo: string; number: string }>(
@@ -16,10 +17,12 @@ export const POST = withApi<{ owner: string; repo: string; number: string }>(
     const number = Number.parseInt(params.number, 10);
     if (!Number.isInteger(number) || number < 1) throw badRequest("Invalid issue number");
 
-    const input = await parseJson(request, commentSchema);
-    await gateway.addIssueComment(params.owner, params.repo, number, input.body);
+    return idempotent(request, { userId: viewer.userId, requestId }, async () => {
+      const input = await parseJson(request, commentSchema);
+      await gateway.addIssueComment(params.owner, params.repo, number, input.body);
 
-    return jsonResponse({ created: true }, { status: 201, requestId });
+      return jsonResponse({ created: true }, { status: 201, requestId });
+    });
   },
   { mutation: true },
 );

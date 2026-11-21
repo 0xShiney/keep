@@ -13,7 +13,8 @@ export function UserMenu({ login, avatarUrl }: { login: string; avatarUrl: strin
     <DropdownMenu.Root>
       <DropdownMenu.Trigger
         className="focus-visible:outline-ring inline-flex items-center gap-1.5 rounded-md p-0.5 outline-none focus-visible:outline-2 focus-visible:outline-offset-2"
-        aria-label={`Account menu for ${login}`}
+        // The visible text is the avatar initials; the accessible name must contain it.
+        aria-label={`${login.slice(0, 1).toUpperCase()} · Account menu for ${login}`}
       >
         <Avatar name={login} src={avatarUrl} size={24} />
       </DropdownMenu.Trigger>

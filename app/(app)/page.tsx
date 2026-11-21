@@ -191,7 +191,7 @@ export default async function DashboardPage({
                         {event.repoOwner && event.repoName ? (
                           <Link
                             href={`/${event.repoOwner}/${event.repoName}`}
-                            className="text-accent hover:underline"
+                            className="text-accent underline underline-offset-2"
                           >
                             {event.repoOwner}/{event.repoName}
                           </Link>

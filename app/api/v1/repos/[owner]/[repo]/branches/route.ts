@@ -4,6 +4,7 @@ import { forbidden } from "@/lib/errors";
 import { withApi } from "@/lib/http/api-route";
 import { parseJson } from "@/lib/http/body";
 import { jsonResponse } from "@/lib/http/problem";
+import { idempotent } from "@/lib/http/idempotency";
 import { createBranchSchema } from "@/lib/schemas";
 
 export const POST = withApi<{ owner: string; repo: string }>(
@@ -13,9 +14,11 @@ export const POST = withApi<{ owner: string; repo: string }>(
     const decision = authorize(viewer, "repo:write", toRepoResource(repo));
     if (!decision.allowed) throw forbidden();
 
-    const input = await parseJson(request, createBranchSchema);
-    await gateway.createBranch(params.owner, params.repo, input.name, input.from);
-    return jsonResponse({ created: input.name, from: input.from }, { status: 201, requestId });
+    return idempotent(request, { userId: viewer.userId, requestId }, async () => {
+      const input = await parseJson(request, createBranchSchema);
+      await gateway.createBranch(params.owner, params.repo, input.name, input.from);
+      return jsonResponse({ created: input.name, from: input.from }, { status: 201, requestId });
+    });
   },
   { mutation: true },
 );

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { ForgejoApiError } from "@/lib/forgejo/client";
+import { TokenBrokerUnavailableError } from "@/lib/forgejo/token-broker";
 import { AppError } from "@/lib/errors";
 import { childLogger } from "@/lib/logger";
 
@@ -64,6 +65,11 @@ export function problemFromError(error: unknown, requestId: string): NextRespons
       type: `https://keep.local/problems/${slug(error.title)}`,
       extra: error.errors ? { errors: error.errors } : undefined,
     });
+  }
+
+  if (error instanceof TokenBrokerUnavailableError) {
+    log.warn({ requestId, reason: error.reason }, "token broker unavailable");
+    return problem(503, "Token management unavailable", error.reason, { requestId });
   }
 
   if (error instanceof ForgejoApiError) {

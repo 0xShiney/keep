@@ -146,6 +146,19 @@ export const addKeySchema = z.object({
   key: z.string().trim().min(20).max(8192),
 });
 
+export const tokenScopeSchema = z.enum([
+  "read:repository",
+  "write:repository",
+  "read:user",
+  "write:user",
+  "read:issue",
+  "write:issue",
+  "read:organization",
+  "write:organization",
+  "read:notification",
+  "write:notification",
+]);
+
 export const createTokenSchema = z.object({
   name: z
     .string()
@@ -153,7 +166,8 @@ export const createTokenSchema = z.object({
     .min(1)
     .max(100)
     .regex(/^[A-Za-z0-9._-]+$/, "Use letters, digits, dots, dashes or underscores"),
-  scopes: z.array(z.string().max(50)).max(20).default([]),
+  // Least privilege by default; `all` is deliberately not an accepted scope here.
+  scopes: z.array(tokenScopeSchema).min(1).max(10).default(["read:repository"]),
 });
 
 export const prefsSchema = z.object({
