@@ -35,8 +35,10 @@ if [ "$(printf '%s' "$BROKER_LOGIN" | tr '[:upper:]' '[:lower:]')" = "$(printf '
 	exit 1
 fi
 
-compose() { docker compose -f deploy/compose.yaml "$@"; }
-forgejo_cli() { compose exec -T forgejo forgejo "$@"; }
+compose() { docker compose --env-file .env -f deploy/compose.yaml "$@"; }
+# The official image runs as root; the forgejo CLI refuses root, so use the `git`
+# account (uid 1000) that owns /data.
+forgejo_cli() { compose exec -T --user git forgejo forgejo "$@"; }
 mkdir -p deploy/secrets
 
 echo "waiting for Forgejo"
@@ -68,6 +70,8 @@ BROKER_PASSWORD="$(node -e 'process.stdout.write(require("crypto").randomBytes(2
 if user_exists "$BROKER_LOGIN"; then
 	echo "rotating password for broker account $BROKER_LOGIN"
 	forgejo_cli admin user change-password --username "$BROKER_LOGIN" --password "$BROKER_PASSWORD"
+	# change-password sets must_change_password, which makes the API return 403.
+	forgejo_cli admin user must-change-password --unset "$BROKER_LOGIN"
 else
 	echo "creating broker account $BROKER_LOGIN"
 	forgejo_cli admin user create \
@@ -80,8 +84,10 @@ fi
 
 # A short-lived token is needed to register/rotate the OAuth application. It is
 # deleted as soon as the app exists; it is never used for token issuance.
+# Unique name: a previous aborted run may have left a token behind.
+BOOTSTRAP_TOKEN_NAME="keep-bootstrap-$(date +%s)-$$"
 TOKEN="$(forgejo_cli admin user generate-access-token \
-	--username "$KEEP_OWNER_LOGIN" --token-name keep-bootstrap --scopes all --raw | tr -d '\r\n')"
+	--username "$KEEP_OWNER_LOGIN" --token-name "$BOOTSTRAP_TOKEN_NAME" --scopes all --raw | tr -d '\r\n')"
 [ -n "$TOKEN" ] || { echo "could not create bootstrap token" >&2; exit 1; }
 
 API="http://127.0.0.1:3000/api/v1"
@@ -89,34 +95,35 @@ id="$(compose exec -T forgejo curl -fsS -H "Authorization: token $TOKEN" \
 	"$API/user/applications/oauth2" |
 	node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const a=JSON.parse(s);const m=a.find(x=>x.name==="Keep");process.stdout.write(m?String(m.id):"")})')"
 
+# The list endpoint never returns client_secret; only the create/PATCH response does,
+# so capture the response body of the write instead of re-reading the app.
+redirect="${APP_ORIGIN:-https://${APP_HOST}}/api/auth/callback"
 if [ -n "$id" ]; then
 	echo "OAuth application already exists (id $id); rotating secret"
-	compose exec -T forgejo curl -fsS -X PATCH -H "Authorization: token $TOKEN" \
-		-H "Content-Type: application/json" \
-		"$API/user/applications/oauth2/$id" >/dev/null
-else
-	echo "registering OAuth application"
-	redirect="https://${APP_HOST}/api/auth/callback"
-	compose exec -T forgejo curl -fsS -X POST -H "Authorization: token $TOKEN" \
+	APP_JSON="$(compose exec -T forgejo curl -fsS -X PATCH -H "Authorization: token $TOKEN" \
 		-H "Content-Type: application/json" \
 		-d "{\"name\":\"Keep\",\"redirect_uris\":[\"$redirect\"],\"confidential_client\":true}" \
-		"$API/user/applications/oauth2" >/dev/null
+		"$API/user/applications/oauth2/$id")"
+else
+	echo "registering OAuth application"
+	APP_JSON="$(compose exec -T forgejo curl -fsS -X POST -H "Authorization: token $TOKEN" \
+		-H "Content-Type: application/json" \
+		-d "{\"name\":\"Keep\",\"redirect_uris\":[\"$redirect\"],\"confidential_client\":true}" \
+		"$API/user/applications/oauth2")"
 fi
 
-compose exec -T forgejo curl -fsS -H "Authorization: token $TOKEN" \
-	"$API/user/applications/oauth2" |
-	node -e '
-		let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
-			const app=JSON.parse(s).find(a=>a.name==="Keep");
-			if(!app||!app.client_id||!app.client_secret){console.error("OAuth app missing client credentials");process.exit(1)}
-			require("fs").writeFileSync("deploy/secrets/oauth.env",
-				`FORGEJO_CLIENT_ID=${app.client_id}\nFORGEJO_CLIENT_SECRET=${app.client_secret}\n`,
-				{mode:0o600});
-		});'
+printf '%s' "$APP_JSON" | node -e '
+	let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
+		const app=JSON.parse(s);
+		if(!app.client_id||!app.client_secret){console.error("OAuth app missing client credentials");process.exit(1)}
+		require("fs").writeFileSync("deploy/secrets/oauth.env",
+			`FORGEJO_CLIENT_ID=${app.client_id}\nFORGEJO_CLIENT_SECRET=${app.client_secret}\n`,
+			{mode:0o600});
+	});'
 
 # Remove the bootstrap token: it has served its purpose.
 compose exec -T forgejo curl -fsS -X DELETE -H "Authorization: token $TOKEN" \
-	"$API/users/$KEEP_OWNER_LOGIN/tokens/keep-bootstrap" >/dev/null || true
+	"$API/users/$KEEP_OWNER_LOGIN/tokens/$BOOTSTRAP_TOKEN_NAME" >/dev/null || true
 
 BROKER_LOGIN="$BROKER_LOGIN" BROKER_PASSWORD="$BROKER_PASSWORD" node -e '
 	const fs=require("fs");

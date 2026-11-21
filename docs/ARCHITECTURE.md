@@ -21,7 +21,7 @@ are forbidden without an approved decision-log entry.
 | **Next.js app**         | Rendering, BFF endpoints, OAuth client, sessions, authorization, markdown/code rendering, preferences, audit log                |
 | **Postgres**            | Two databases: `forgejo` (owned by Forgejo) and `keep` (owned by the app)                                                       |
 | **Caddy**               | TLS, host routing, request-body caps, proxy-level rate limits                                                                   |
-| **restic**              | Encrypted, deduplicated backups of dumps + repositories                                                                         |
+| **restic** (host)       | Encrypted, deduplicated backups of the two `pg_dump` files + Forgejo tar                                                         |
 
 The app **never** stores a second copy of repository data and never shells out to
 `git`. Every repository read goes through Forgejo's REST API; every git write is

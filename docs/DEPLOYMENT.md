@@ -3,10 +3,10 @@
 Single host, five containers. Target baseline: 2 vCPU / 4 GB / 20 GB SSD, Docker
 Engine 24+, Compose v2, a domain you control.
 
-> These steps have **not** been executed end-to-end in the delivery environment
-> (no Docker daemon). Commands are validated against the files in `deploy/` and
-> Forgejo's documented CLI/API, but treat the first install as a supervised run and
-> keep [BACKUP-RESTORE](BACKUP-RESTORE.md) open.
+> Postgres and Forgejo ran from this compose file and the app ran natively against
+> them; the web/Caddy containers and the full five-container install have not been
+> run (see [PHASES](PHASES.md)). Treat the first install as a supervised run and keep
+> [BACKUP-RESTORE](BACKUP-RESTORE.md) open.
 
 ## 1. DNS and firewall
 
@@ -38,8 +38,8 @@ The Postgres container creates both databases on first boot:
 ## 3. Start the data services
 
 ```bash
-docker compose -f deploy/compose.yaml up -d postgres forgejo
-docker compose -f deploy/compose.yaml ps          # both healthy
+docker compose --env-file .env -f deploy/compose.yaml up -d postgres forgejo
+docker compose --env-file .env -f deploy/compose.yaml ps          # both healthy
 ```
 
 Forgejo's `app.ini` is generated from the `FORGEJO__*` environment variables in
@@ -74,8 +74,8 @@ app with the callback above and “confidential client” enabled.
 ## 5. Build and start the app
 
 ```bash
-docker compose -f deploy/compose.yaml up -d --build
-docker compose -f deploy/compose.yaml ps
+docker compose --env-file .env -f deploy/compose.yaml up -d --build
+docker compose --env-file .env -f deploy/compose.yaml ps
 curl -fsS https://app.<domain>/healthz
 curl -fsS https://app.<domain>/readyz
 ```
@@ -97,18 +97,18 @@ the digest literals. Upgrade deliberately:
 
 1. Read the release notes (Forgejo LTS patch, Next.js security advisory).
 2. Bump the tag in `compose.yaml`/Dockerfile, run `pin-images`, update digests.
-3. `docker compose up -d --build`, watch `/readyz` and logs.
+3. `docker compose --env-file .env up -d --build`, watch `/readyz` and logs.
 4. Keep the previous `.env` and image digests to roll back.
 
 ## Operations
 
 | Task              | Command                                                        |
 | ----------------- | -------------------------------------------------------------- |
-| Logs (JSON, pino) | `docker compose logs -f web`                                   |
-| Restart app only  | `docker compose up -d --force-recreate web`                    |
+| Logs (JSON, pino) | `docker compose --env-file .env logs -f web`                   |
+| Restart app only  | `docker compose --env-file .env up -d --force-recreate web`    |
 | Forgejo admin UI  | `ssh -L 3001:forgejo:3000 user@host` → `http://localhost:3001` |
 | Migrations        | automatic in the web entrypoint (`scripts/migrate.mjs`)        |
-| Backup            | `docker compose --profile backup run --rm backup`              |
+| Backup            | `./deploy/backup/backup.sh` (host; needs `restic`)             |
 | Health            | `/healthz` (liveness), `/readyz` (DB + Forgejo)                |
 
 ## Upgrades and rollback

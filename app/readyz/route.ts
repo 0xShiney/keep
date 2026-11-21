@@ -10,7 +10,10 @@ const log = childLogger({ module: "readyz" });
 async function checkForgejo(): Promise<{ ok: boolean; error?: string }> {
   const env = getEnv();
   try {
-    const response = await fetch(`${env.FORGEJO_INTERNAL_URL.replace(/\/+$/, "")}/api/v1/version`, {
+    // `/api/v1/version` requires a session when REQUIRE_SIGNIN_VIEW is on (the
+    // documented production setting), which made readiness always 503. The
+    // instance health endpoint is unauthenticated and checks Forgejo's own DB.
+    const response = await fetch(`${env.FORGEJO_INTERNAL_URL.replace(/\/+$/, "")}/api/healthz`, {
       headers: { accept: "application/json" },
       cache: "no-store",
       signal: AbortSignal.timeout(3000),

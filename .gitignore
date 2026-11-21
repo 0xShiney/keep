@@ -24,3 +24,6 @@ test-results/
 
 # os
 .DS_Store
+
+# backup scratch space
+deploy/backup/work/

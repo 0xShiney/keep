@@ -38,6 +38,8 @@ import type {
 export type ApiRepository = components["schemas"]["Repository"];
 export type ApiUser = components["schemas"]["User"];
 export type ApiContents = components["schemas"]["ContentsResponse"];
+export type ApiGitTree = components["schemas"]["GitTreeResponse"];
+export type ApiGitEntry = components["schemas"]["GitEntry"];
 export type ApiCommit = components["schemas"]["Commit"];
 export type ApiBranch = components["schemas"]["Branch"];
 export type ApiTag = components["schemas"]["Tag"];
@@ -124,6 +126,27 @@ export function mapRepo(
       pull: permissions?.pull ?? true,
     },
     ownerInfo: mapOwner(raw.owner),
+  };
+}
+
+export function mapGitEntry(raw: ApiGitEntry): TreeEntry {
+  const type =
+    raw.type === "tree"
+      ? "dir"
+      : raw.mode === "120000"
+        ? "symlink"
+        : raw.type === "commit" || raw.mode === "160000"
+          ? "submodule"
+          : "file";
+  return {
+    name: raw.path?.split("/").pop() ?? "",
+    path: raw.path ?? "",
+    type,
+    size: raw.size ?? 0,
+    sha: raw.sha ?? "",
+    // The git tree API does not expose per-entry last-commit metadata.
+    lastCommitSha: null,
+    lastCommitWhen: null,
   };
 }
 

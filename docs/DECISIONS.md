@@ -231,6 +231,12 @@ still digest-pinned and reproducible, but the compose *orchestration* itself is
 labelled Not run. Native runs use the same HTTP/SSH surfaces and the same app
 code, so OAuth, git, E2E, a11y, perf and restore results are real.
 
+**Update (2026-11-21):** a later verification container did have a working Docker
+daemon. Postgres 16.10 and Forgejo 15.0.12 were then run from `deploy/compose.yaml`,
+the app natively against them, and the backup/restore drill and k6 were repeated on
+that stack. The web/Caddy containers remain unrun. The native-path details above are
+kept as the record of the original constraint.
+
 ## D-023 — CSP policy is a module, not a string in middleware
 
 The policy moved to `lib/security/csp.ts` so `tests/unit/csp.test.ts` can assert

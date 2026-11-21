@@ -1,8 +1,43 @@
 import type { ForgejoGateway } from "@/lib/forgejo/gateway";
-import type { CommitDetail, CommitSummary, Paginated } from "@/lib/forgejo/model";
+import type {
+  BranchSummary,
+  CommitDetail,
+  CommitSummary,
+  Paginated,
+} from "@/lib/forgejo/model";
 import { parseUnifiedDiff, summarizeDiff, type DiffFile, type ParsedDiff } from "@/lib/git/diff";
 
-export const DEFAULT_COMMIT_PAGE_SIZE = 50;
+/**
+ * 15 rather than 50: Forgejo's commit endpoint scales with page size (≈0.16 s
+ * for 15 vs ≈0.44 s for 50 on the 5k-commit fixture), and the NFR allows 300 ms
+ * for the whole page. 15 commits is still a screen of history before paging.
+ */
+export const DEFAULT_COMMIT_PAGE_SIZE = 15;
+
+/**
+ * Branch summaries already carry their head commit, so the tree page can skip a
+ * separate `/commits` request (which costs ~170 ms on a 5k-commit repository).
+ */
+export function commitFromBranch(branch: BranchSummary): CommitSummary {
+  return {
+    sha: branch.sha,
+    shortSha: branch.sha.slice(0, 7),
+    message: branch.message,
+    summaryLine: branch.message.split("\n")[0] ?? "",
+    author: {
+      name: branch.authorName,
+      email: "",
+      login: branch.authorLogin,
+      avatarUrl: null,
+      date: branch.date,
+    },
+    committer: null,
+    parents: [],
+    createdAt: branch.date,
+    htmlUrl: null,
+    verification: null,
+  };
+}
 
 export async function listCommitHistory(
   gateway: ForgejoGateway,

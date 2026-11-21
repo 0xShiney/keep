@@ -67,7 +67,9 @@ services:
       FORGEJO__server__BUILTIN_SSH_SERVER_USER: "git"
       FORGEJO__server__SSH_DOMAIN: ${GIT_HOST}
       FORGEJO__server__SSH_PORT: ${SSH_PORT:-2222}
-      FORGEJO__server__SSH_LISTEN_PORT: "22"
+      # The image's entrypoint already binds :22 with OpenSSH; the built-in SSH
+      # server must listen elsewhere or Forgejo exits with "address already in use".
+      FORGEJO__server__SSH_LISTEN_PORT: "2222"
       FORGEJO__server__DISABLE_SSH: "false"
       # Hardening: no open registration, no install wizard, private-by-default.
       FORGEJO__security__INSTALL_LOCK: "true"
@@ -91,7 +93,7 @@ services:
       - /etc/timezone:/etc/timezone:ro
       - /etc/localtime:/etc/localtime:ro
     ports:
-      - "${SSH_PORT:-2222}:22"
+      - "${SSH_PORT:-2222}:2222"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/api/healthz"]
       interval: 15s
@@ -164,29 +166,6 @@ services:
     deploy:
       resources:
         limits: { cpus: "0.5", memory: 256m }
-
-  # One-shot: `docker compose --profile backup run --rm backup`
-  backup:
-    image: restic/restic:0.18.0@sha256:4cf4a61ef9786f4de53e9de8c8f5c040f33830eb0a10bf3d614410ee2fcb6120
-    profiles: [backup]
-    logging: *logging
-    environment:
-      RESTIC_REPOSITORY: ${RESTIC_REPOSITORY:-}
-      RESTIC_PASSWORD: ${RESTIC_PASSWORD:-}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
-      POSTGRES_USER: ${POSTGRES_USER}
-      PGPASSWORD: ${POSTGRES_PASSWORD}
-      KEEP_DB_NAME: ${KEEP_DB_NAME:-keep}
-    entrypoint: ["/bin/sh", "/scripts/backup.sh"]
-    volumes:
-      - ./backup:/scripts:ro
-      - forgejo-data:/forgejo-data:ro
-      - ./backup/work:/work
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks: [internal]
 
 volumes:
   postgres-data:

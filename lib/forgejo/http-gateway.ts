@@ -7,6 +7,7 @@ import {
   mapCommit,
   mapCommitDetail,
   mapFileBlob,
+  mapGitEntry,
   mapIssue,
   mapPull,
   mapPullDetail,
@@ -17,13 +18,13 @@ import {
   mapSshKey,
   mapTag,
   mapTimelineComment,
-  mapTreeEntry,
   mapUser,
   type ApiActivity,
   type ApiBranch,
   type ApiChangedFile,
   type ApiCommit,
   type ApiContents,
+  type ApiGitTree,
   type ApiIssue,
   type ApiPublicKey,
   type ApiPull,
@@ -60,6 +61,7 @@ import type {
   CommitSummary,
   CommitDetail,
 } from "./model";
+import { cached } from "@/lib/cache";
 import { cloneUrls } from "@/lib/env";
 import { childLogger } from "@/lib/logger";
 import { getTokenBroker } from "./token-broker";
@@ -71,6 +73,22 @@ export const FORGEJO_MAX_LIMIT = 50;
 
 /** Refuse to hand more than this many bytes of diff to the parser/UI. */
 export const MAX_DIFF_BYTES = 2 * 1024 * 1024;
+
+/**
+ * Read-only lists that render on nearly every page. 30 s is short enough that a
+ * newly pushed commit or repository shows up on the next view, and long enough
+ * to collapse a page's sidebar + dashboard requests into one Forgejo call.
+ */
+const LIST_CACHE_TTL_MS = 30_000;
+
+/**
+ * Commit pages are the one Forgejo read that is CPU-bound on the server side
+ * (~200 ms per page on 5k commits, ~1 s each under five concurrent requests).
+ * The single-flight TTL collapses duplicate traffic; the trade-off is that a
+ * push can take up to 30 s to appear on the commits page. The tree page reads
+ * branch heads and is not affected.
+ */
+const COMMITS_CACHE_TTL_MS = 30_000;
 
 function clampLimit(limit: number): number {
   return Math.min(Math.max(1, limit), FORGEJO_MAX_LIMIT);
@@ -87,10 +105,6 @@ function capText(text: string): { text: string; truncated: boolean } {
   return { text: text.slice(0, MAX_DIFF_BYTES), truncated: true };
 }
 
-function isContentsArray(value: unknown): value is ApiContents[] {
-  return Array.isArray(value);
-}
-
 interface ComparePayload {
   commits?: ApiCommit[];
   files?: ApiChangedFile[];
@@ -99,6 +113,9 @@ interface ComparePayload {
 }
 
 export class HttpForgejoGateway implements ForgejoGateway {
+  /** One gateway lives for one request, so this only de-duplicates page loads. */
+  private readonly repoCache = new Map<string, Promise<RepoSummary>>();
+
   constructor(
     private readonly client: ForgejoClient,
     private readonly username: string,
@@ -113,28 +130,40 @@ export class HttpForgejoGateway implements ForgejoGateway {
   async listRepos(filters: RepoSearchFilters): Promise<Paginated<RepoSummary>> {
     const page = filters.page ?? 1;
     const limit = clampLimit(filters.limit ?? 20);
-    const { data, headers } = await this.client.json<{ data?: ApiRepository[] }>("/repos/search", {
-      query: {
-        q: filters.query,
-        page,
-        limit,
-        sort: filters.sort,
-        order: filters.order,
-        topic: false,
-      },
+    const key = `repos:${this.username}:${JSON.stringify({ ...filters, page, limit })}`;
+    return cached(key, LIST_CACHE_TTL_MS, async () => {
+      const { data, headers } = await this.client.json<{ data?: ApiRepository[] }>(
+        "/repos/search",
+        {
+          query: {
+            q: filters.query,
+            page,
+            limit,
+            sort: filters.sort,
+            order: filters.order,
+            topic: false,
+          },
+        },
+      );
+      const raw = data.data ?? [];
+      const items = raw.map((repo) => mapRepo(repo));
+      return {
+        items,
+        total: totalFrom(headers, items.length),
+        hasMore: raw.length === limit,
+      };
     });
-    const raw = data.data ?? [];
-    const items = raw.map((repo) => mapRepo(repo));
-    return {
-      items,
-      total: totalFrom(headers, items.length),
-      hasMore: raw.length === limit,
-    };
   }
 
   async getRepo(owner: string, name: string): Promise<RepoSummary> {
-    const { data } = await this.client.json<ApiRepository>(`/repos/${owner}/${name}`);
-    return mapRepo(data);
+    const key = `${owner}/${name}`;
+    const cached = this.repoCache.get(key);
+    if (cached) return cached;
+    const request = this.client
+      .json<ApiRepository>(`/repos/${owner}/${name}`)
+      .then(({ data }) => mapRepo(data));
+    this.repoCache.set(key, request);
+    return request;
   }
 
   async createRepo(input: CreateRepoInput): Promise<RepoSummary> {
@@ -206,19 +235,37 @@ export class HttpForgejoGateway implements ForgejoGateway {
     await this.client.empty("DELETE", `/repos/${owner}/${name}/tags/${encodeURIComponent(tag)}`);
   }
 
+  /**
+   * Directory listings come from the git tree API, not `/contents`.
+   *
+   * Forgejo's `/contents` resolves the last commit of every entry by walking
+   * history; on the 10k-file / 5k-commit fixture it took ~1.2 s at the root and
+   * ~18 s per subdirectory, blowing the tree NFR. The git tree API answers in
+   * ~40 ms. The trade-off is that entries no longer carry last-commit metadata
+   * (the git API does not provide it); the UI simply leaves that column blank.
+   *
+   * The tree API is not path-scoped, so each path segment is resolved through
+   * the tree objects instead of one recursive request over 10k entries.
+   */
   async listTree(
     owner: string,
     name: string,
     ref: string,
     path: string,
   ): Promise<{ entries: TreeEntry[]; readme: FileBlob | null }> {
-    const suffix = path ? `/${path.split("/").map(encodeURIComponent).join("/")}` : "";
-    const { data } = await this.client.json<ApiContents[] | ApiContents>(
-      `/repos/${owner}/${name}/contents${suffix}`,
-      { query: { ref } },
-    );
+    const treePath = (sha: string) =>
+      `/repos/${owner}/${name}/git/trees/${encodeURIComponent(sha)}`;
 
-    const entries = (isContentsArray(data) ? data : [data]).map(mapTreeEntry).sort((a, b) => {
+    let tree = await this.client.json<ApiGitTree>(treePath(ref));
+    for (const segment of path.split("/").filter(Boolean)) {
+      const next = (tree.data.tree ?? []).find(
+        (entry) => entry.path === segment && entry.type === "tree" && entry.sha,
+      );
+      if (!next?.sha) return { entries: [], readme: null };
+      tree = await this.client.json<ApiGitTree>(treePath(next.sha));
+    }
+
+    const entries = (tree.data.tree ?? []).map(mapGitEntry).sort((a, b) => {
       if (a.type === b.type) return a.name.localeCompare(b.name);
       return a.type === "dir" ? -1 : 1;
     });
@@ -264,19 +311,22 @@ export class HttpForgejoGateway implements ForgejoGateway {
     options: { ref?: string; path?: string; page: number; limit: number },
   ): Promise<Paginated<CommitSummary>> {
     const limit = clampLimit(options.limit);
-    const { data, headers } = await this.client.json<ApiCommit[]>(
-      `/repos/${owner}/${name}/commits`,
-      {
-        query: {
-          sha: options.ref,
-          path: options.path,
-          page: options.page,
-          limit,
+    const key = `commits:${this.username}:${owner}/${name}:${JSON.stringify({ ...options, limit })}`;
+    return cached(key, COMMITS_CACHE_TTL_MS, async () => {
+      const { data, headers } = await this.client.json<ApiCommit[]>(
+        `/repos/${owner}/${name}/commits`,
+        {
+          query: {
+            sha: options.ref,
+            path: options.path,
+            page: options.page,
+            limit,
+          },
         },
-      },
-    );
-    const items = data.map(mapCommit);
-    return { items, total: totalFrom(headers, items.length), hasMore: data.length === limit };
+      );
+      const items = data.map(mapCommit);
+      return { items, total: totalFrom(headers, items.length), hasMore: data.length === limit };
+    });
   }
 
   async getCommit(owner: string, name: string, sha: string): Promise<CommitDetail> {
@@ -575,11 +625,15 @@ export class HttpForgejoGateway implements ForgejoGateway {
   }
 
   async listActivity(limit: number): Promise<ActivityEvent[]> {
-    const { data } = await this.client.json<ApiActivity[]>(
-      `/users/${encodeURIComponent(this.username)}/activities/feeds`,
-      { query: { limit: clampLimit(limit), "only-performed-by": true } },
-    );
-    return data.map(mapActivity);
+    const capped = clampLimit(limit);
+    const key = `activity:${this.username}:${capped}`;
+    return cached(key, LIST_CACHE_TTL_MS, async () => {
+      const { data } = await this.client.json<ApiActivity[]>(
+        `/users/${encodeURIComponent(this.username)}/activities/feeds`,
+        { query: { limit: capped, "only-performed-by": true } },
+      );
+      return data.map(mapActivity);
+    });
   }
 
   cloneUrls(owner: string, name: string): { httpsUrl: string; sshUrl: string } {

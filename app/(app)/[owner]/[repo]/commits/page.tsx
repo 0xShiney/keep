@@ -54,7 +54,7 @@ export default async function CommitsPage({
   const page = Math.max(1, Number.parseInt(query.page ?? "1", 10) || 1);
 
   const [commits, branches, tags] = await Promise.all([
-    listCommitHistory(gateway, owner, repoName, { ref, path: path || undefined, page, limit: 50 }),
+    listCommitHistory(gateway, owner, repoName, { ref, path: path || undefined, page }),
     gateway.listBranches(owner, repoName).catch(() => []),
     gateway.listTags(owner, repoName).catch(() => []),
   ]);

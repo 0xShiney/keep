@@ -15,7 +15,7 @@ import { InvalidPathError, splitRefPath } from "@/lib/git/path";
 import { formatRelativeTime } from "@/lib/utils";
 import { loadRepoForPage, pageContext } from "@/server/context";
 import { loadTree } from "@/server/code";
-import { listCommitHistory } from "@/server/commits";
+import { commitFromBranch, listCommitHistory } from "@/server/commits";
 
 export async function generateMetadata({
   params,
@@ -60,19 +60,25 @@ export default async function TreePage({
     throw error;
   }
 
-  const [tree, branches, tags, commits] = await Promise.all([
+  const [tree, branches, tags] = await Promise.all([
     loadTree(gateway, owner, repoName, ref, path),
     gateway.listBranches(owner, repoName).catch(() => []),
     gateway.listTags(owner, repoName).catch(() => []),
-    listCommitHistory(gateway, owner, repoName, {
-      ref,
-      path: path || undefined,
-      page: 1,
-      limit: 1,
-    }).catch(() => ({ items: [], total: 0, hasMore: false })),
   ]);
 
-  const lastCommit = commits.items[0];
+  // At the root the branch head *is* the last commit, and the branch list is
+  // already loaded. Only a subdirectory needs the path-scoped history request.
+  const branchHead = path ? undefined : branches.find((branch) => branch.name === ref);
+  const lastCommit = branchHead
+    ? commitFromBranch(branchHead)
+    : (
+        await listCommitHistory(gateway, owner, repoName, {
+          ref,
+          path: path || undefined,
+          page: 1,
+          limit: 1,
+        }).catch(() => ({ items: [], total: 0, hasMore: false }))
+      ).items[0];
   const encodedRef = encodeURIComponent(ref);
 
   return (

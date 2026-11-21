@@ -1,8 +1,11 @@
 # Phase 5 verification — handoff
 
-**State: verification ~80% complete.** All functional/a11y gates pass; k6 was mid-run at handoff;
-backup→restore drill, `docs/PHASES.md` update, commit and tag are outstanding.
-Everything below is reproducible; nothing depends on this chat's shell surviving.
+**State: measured gates complete (2026-11-21).** Docker was available in the later
+verification container, so Postgres + Forgejo ran from `deploy/compose.yaml`, the app
+ran natively, and k6, backup→restore, E2E and a11y were rerun on that stack.
+`docs/PHASES.md` now holds the real numbers. Remaining gaps: the web/Caddy containers
+have not been run, merge-strategy coverage is partial, and the upgrade rehearsal is
+not done; Phase 1/3/5 therefore stay untagged. Everything below is reproducible.
 
 ---
 
@@ -69,14 +72,16 @@ Unit baseline: `pnpm typecheck`, `pnpm lint`, `pnpm test` (186), `pnpm build` �
 | Unit | `pnpm test` | 186 pass |
 | Build | `pnpm build` | pass |
 
-Docker is unusable here (no socket access, `CapEff=0`, no sudo, no TCP API), so the same versions
-run natively: Forgejo **15.0.12** (signed release, sha256
-`5919d4558a09dab76cae90156aefe09dadbb2d8705324f21df394ca277c925a1`), PostgreSQL **16.15**,
-Next 16.4.6. Recorded as **D-022**; compose orchestration itself is still "Not run".
+The original delivery VM had no usable Docker API, so the first runs used native versions
+(recorded as **D-022**). The later verification container had Docker; the results below were
+repeated with Postgres 16.10 and Forgejo 15.0.12 from `deploy/compose.yaml` and the app
+(Next 16.4.6) native. The web/Caddy containers were still not started.
 
-### k6 (in flight at handoff)
+### k6 (final run)
 
-- k6 **v0.54.0** installed at `/tmp/bin/k6`.
+- k6 **v0.54.0** installed at `/tmp/bin/k6`. Final run: dashboard p95 **262.76 ms**,
+tree **134.50 ms**, commits **283.02 ms**, blob **195.67 ms**, `http_req_failed` **0.00 %**
+(1,380 requests, 5 VUs); all thresholds passed.
 - Perf fixture pushed: `keep/bench` — **10,001 files** (100 dirs × 100) + **5,000 commits**
   (generated with `git fast-import`, pushed over SSH).
 - `tests/perf/k6.js` now also has a `blob` scenario (NFR `<400 ms` had a threshold but no scenario).
@@ -99,21 +104,17 @@ Next 16.4.6. Recorded as **D-022**; compose orchestration itself is still "Not r
 
 ## 3. Outstanding work
 
-1. **k6**: read `/tmp/k6.log` (or re-run), capture p95 for dashboard/tree/commits/blob and
-   `http_req_failed`, compare against 300/250/300/400 ms.
-2. **Backup → wipe → restore drill** (not started):
-   - `forgejo dump --config /tmp/forge/custom/conf/app.ini --dir /tmp/backup/forgejo --type tar`
-     plus `pg_dump -p 5433 forgejo` and `pg_dump -p 5433 keep`.
-   - Stop both, move `/tmp/forge/data` and `/tmp/pgdata` aside (or drop/recreate the DBs),
-     restore, start, then prove: OAuth login, a repo clone from the restored data, and the
-     `keep` DB rows (repos/sessions) intact. Record measured RTO.
-3. **`docs/PHASES.md`**: replace the stale "Not run" rows with the evidence above, include the
-   measured k6 numbers and the restore RTO, and keep the Docker limitation explicit.
-4. **Commit** the working tree (conventional style, e.g.
-   `feat: least-privilege token broker, idempotent creates, verified phase 5`), then tag
-   `phase-N-complete` **only** for phases whose full acceptance criteria pass.
-5. Optional: note in `docs/DEPLOYMENT.md` that `BUILTIN_SSH_SERVER_USER` is mandatory for the
-   built-in SSH server (compose already sets it).
+1. Build and run all five compose services on a clean host (web + Caddy included) and
+   repeat the restore drill through the containerised app.
+2. Exercise every merge strategy against Forgejo; only the default one has live E2E
+   coverage.
+3. Run the upgrade rehearsal (previous minor → current, rollback).
+4. Clear the six remaining lint warnings.
+
+Already done: k6 thresholds pass (dashboard 263 ms, tree 135 ms, commits 283 ms,
+blob 196 ms p95, 0 % failures); backup→restore drill passes with a measured 55 s RTO;
+`docs/PHASES.md`, `docs/BACKUP-RESTORE.md`, `docs/DEPLOYMENT.md` and the decision log
+were updated; `phase-2-complete` is tagged.
 
 ---
 
@@ -183,9 +184,8 @@ SSH test key: `/tmp/sshkey`; tokens: `/tmp/e2e.token`, `/tmp/admin.token`; OAuth
 
 ## 5. Honest status lines for the report
 
-- Docker Compose orchestration: **not run** (environment limitation, D-022) — native equivalents used.
+- Docker Compose: Postgres + Forgejo **run from the committed compose file**; web/Caddy still native/unrun.
 - E2E (10 flows) and axe WCAG 2.2 AA (22 scans + 3 keyboard): **passing, measured**.
 - Git over HTTPS and SSH (clone + push): **verified against real Forgejo**.
-- k6 NFRs: **measured, numbers still to be read from `/tmp/k6.log`** — do not claim a p95 before
-  reading it; tree (`<250 ms`) is the likely failure and needs a source fix, not a threshold edit.
-- Backup/restore: **not yet run**; RTO must come from the drill.
+- k6 NFRs: **all four pass**; numbers in `docs/PHASES.md`.
+- Backup/restore: **drill passed**, measured RTO **55 s** (`docs/BACKUP-RESTORE.md`).
